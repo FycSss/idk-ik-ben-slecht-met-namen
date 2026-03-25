@@ -1,0 +1,27 @@
+{
+  "name": "idk-ik-ben-slecht-met-namen",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FycSss/idk-ik-ben-slecht-met-namen.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/FycSss/idk-ik-ben-slecht-met-namen/issues"
+  },
+  "homepage": "https://github.com/FycSss/idk-ik-ben-slecht-met-namen#readme",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3"
+  }
+}
