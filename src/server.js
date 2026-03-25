@@ -4,14 +4,21 @@ const crypto = require('node:crypto');
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
 
 const PORT = Number(process.env.PORT || 3000);
-const JWT_SECRET = process.env.JWT_SECRET || 'change-this-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
+const TOKEN_EXPIRES_IN = process.env.TOKEN_EXPIRES_IN || '24h';
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const BCRYPT_ROUNDS = 12;
+let usersLockChain = Promise.resolve();
+
+if (!process.env.JWT_SECRET) {
+  console.warn('JWT_SECRET is not set. Using an ephemeral secret for this process.');
+}
 
 app.use(express.json({ limit: '1mb' }));
 
@@ -24,17 +31,28 @@ const ensureUsersFile = async () => {
   }
 };
 
-const readUsers = async () => {
+const withUsersLock = async (operation) => {
+  const lockedOperation = usersLockChain.then(() => operation());
+  usersLockChain = lockedOperation.then(
+    () => undefined,
+    () => undefined
+  );
+  return lockedOperation;
+};
+
+const readUsersUnlocked = async () => {
   await ensureUsersFile();
   const raw = await fs.readFile(USERS_FILE, 'utf8');
   const parsed = JSON.parse(raw);
   if (!Array.isArray(parsed)) {
-    throw new Error('Invalid users storage format.');
+    throw new Error(`Users data must be an array, but found: ${typeof parsed}.`);
   }
   return parsed;
 };
 
-const writeUsers = async (users) => {
+const readUsers = async () => withUsersLock(() => readUsersUnlocked());
+
+const writeUsersUnlocked = async (users) => {
   await fs.writeFile(USERS_FILE, `${JSON.stringify(users, null, 2)}\n`, 'utf8');
 };
 
@@ -72,11 +90,19 @@ const validateCredentials = (username, password) => {
   return null;
 };
 
+const authRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 10,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Try again later.' }
+});
+
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
-app.post('/auth/register', async (req, res) => {
+app.post('/auth/register', authRateLimiter, async (req, res) => {
   const { username, password } = req.body || {};
   const validationError = validateCredentials(username, password);
   if (validationError) {
@@ -85,21 +111,29 @@ app.post('/auth/register', async (req, res) => {
 
   const normalizedUsername = username.toLowerCase();
 
-  const users = await readUsers();
-  if (findUserByUsername(users, normalizedUsername)) {
+  const user = await withUsersLock(async () => {
+    const users = await readUsersUnlocked();
+    if (findUserByUsername(users, normalizedUsername)) {
+      return null;
+    }
+
+    const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+
+    const newUser = {
+      id: crypto.randomUUID(),
+      username: normalizedUsername,
+      passwordHash,
+      createdAt: new Date().toISOString()
+    };
+
+    users.push(newUser);
+    await writeUsersUnlocked(users);
+    return newUser;
+  });
+
+  if (!user) {
     return res.status(409).json({ error: 'Username already exists.' });
   }
-
-  const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
-  const user = {
-    id: crypto.randomUUID(),
-    username: normalizedUsername,
-    passwordHash,
-    createdAt: new Date().toISOString()
-  };
-
-  users.push(user);
-  await writeUsers(users);
 
   return res.status(201).json({
     id: user.id,
@@ -107,7 +141,7 @@ app.post('/auth/register', async (req, res) => {
   });
 });
 
-app.post('/auth/login', async (req, res) => {
+app.post('/auth/login', authRateLimiter, async (req, res) => {
   const { username, password } = req.body || {};
   if (typeof username !== 'string' || typeof password !== 'string') {
     return res.status(400).json({ error: 'Username and password are required.' });
@@ -125,7 +159,7 @@ app.post('/auth/login', async (req, res) => {
   }
 
   const token = jwt.sign({ sub: user.id, username: user.username }, JWT_SECRET, {
-    expiresIn: '7d'
+    expiresIn: TOKEN_EXPIRES_IN
   });
 
   return res.json({
@@ -137,7 +171,7 @@ app.post('/auth/login', async (req, res) => {
   });
 });
 
-app.get('/me', authMiddleware, (req, res) => {
+app.get('/me', authRateLimiter, authMiddleware, (req, res) => {
   res.json({
     user: {
       id: req.user.sub,
@@ -146,8 +180,12 @@ app.get('/me', authMiddleware, (req, res) => {
   });
 });
 
-app.use((err, _req, res, _next) => {
-  console.error(err);
+app.use((err, req, res, _next) => {
+  const errorSummary = {
+    name: err?.name || 'Error',
+    message: err?.message || 'Unknown error'
+  };
+  console.error(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`, errorSummary);
   res.status(500).json({ error: 'Internal server error.' });
 });
 

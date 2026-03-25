@@ -8,7 +8,7 @@ process.env.JWT_SECRET = 'test-secret';
 
 const app = require('../src/server');
 
-const dataPath = path.join(__dirname, '..', 'data', 'users.json');
+const usersFilePath = path.join(__dirname, '..', 'data', 'users.json');
 let server;
 let baseUrl;
 
@@ -48,15 +48,17 @@ const request = async (method, route, body, token) => {
     body: body ? JSON.stringify(body) : undefined
   });
 
+  const contentType = response.headers.get('content-type') || '';
+  const isJson = contentType.includes('application/json');
   return {
     status: response.status,
-    body: await response.json()
+    body: isJson ? await response.json() : null
   };
 };
 
 test.beforeEach(async () => {
-  await fs.mkdir(path.dirname(dataPath), { recursive: true });
-  await fs.writeFile(dataPath, '[]\n', 'utf8');
+  await fs.mkdir(path.dirname(usersFilePath), { recursive: true });
+  await fs.writeFile(usersFilePath, '[]\n', 'utf8');
 });
 
 test('register, login and access /me', async () => {

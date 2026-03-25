@@ -11,6 +11,10 @@ npm start
 
 Server draait dan op `http://localhost:3000`.
 
+> Let op: zet `JWT_SECRET` in je omgeving voor een stabiele login-sessie over herstarts heen.
+> Zonder `JWT_SECRET` gebruikt de app per proces een tijdelijke secret.
+> Je kunt de token-duur instellen met `TOKEN_EXPIRES_IN` (standaard: `24h`).
+
 ## Beschikbare endpoints
 
 - `GET /health` - healthcheck
